@@ -1,74 +1,95 @@
 #include <Wire.h>
+#include "SparkFun_BMP581_Arduino_Library.h"
 
-#define TCA9548A_ADDR 0x70  // Default I2C address of the TCA9548A
-#define IIC_ADDRESS 0x47    // I2C address of BMP585
+// I²C mux and sensor address
+#define TCA9548A_ADDR 0x70
+#define BMP_ADDR      0x47
 
-#define PRESS_DATA_MSB 0x22
-#define PRESS_DATA_LSB 0x21
-#define PRESS_DATA_XLSB 0x20
+// Number of channels on the TCA9548A
+const uint8_t CH_PER_BANK = 8;
 
-// Function to select the desired channel on the multiplexer
-void tcaselect(uint8_t channel) {
-  if (channel > 7) return;  // Ensure channel is valid (0-7)
-  Wire.beginTransmission(TCA9548A_ADDR);
-  Wire.write(1 << channel);  // Select the channel by writing a bitmask
-  Wire.endTransmission();
-}
+// Array of 8 BMP581 sensors on Wire + mux
+BMP581 sensors[CH_PER_BANK];
 
-// Function to read a single byte from a register
-uint8_t readRegister(uint8_t reg) {
-  Wire.beginTransmission(IIC_ADDRESS);
-  Wire.write(reg);
-  Wire.endTransmission();
-  Wire.requestFrom(IIC_ADDRESS, 1);
-  return Wire.available() ? Wire.read() : 0;
-}
-
-// Function to read pressure data
-float readPressure() {
-  uint8_t msb = readRegister(PRESS_DATA_MSB);
-  uint8_t lsb = readRegister(PRESS_DATA_LSB);
-  uint8_t xlsb = readRegister(PRESS_DATA_XLSB);
-
-  // Combine the three bytes into a 20-bit value
-  uint32_t rawPressure = ((uint32_t)msb << 16) | ((uint32_t)lsb << 8) | xlsb;
-
-  // Convert to pressure in Pa (divide by 64)
-  return rawPressure / 64.0;
-}
+// Forward declarations
+bool tcaselect(uint8_t ch);
+void resetBMP585(uint8_t addr);
+void initSensors();
 
 void setup() {
   Serial.begin(115200);
   while (!Serial);
-  Serial.println("BMP585 Initialization");
 
   Wire.begin();
+  Serial.println("Initializing BMP581 tactile sensors...");
 
-  for (uint8_t i = 0; i < 8; i++) {
-    tcaselect(i);
-    delay(50);  // Allow stabilization
-    Serial.print("Selected channel: "); Serial.println(i);
+  initSensors();
 
-    // Dummy read to ensure communication
-    uint8_t chip_id = readRegister(0x00);  // CHIP_ID register
-    Serial.print("CHIP_ID: 0x"); Serial.println(chip_id, HEX);
-  }
+  Serial.println("Setup complete.");
 }
 
 void loop() {
-  for (uint8_t i = 0; i < 8; i++) {
-    tcaselect(i);
-    delay(50);  // Stabilization delay
-    Serial.print("Selected channel: "); Serial.println(i);
+  String outputLine;
+  outputLine.reserve(CH_PER_BANK * 8);
 
-    float pressure = readPressure();
-    if (pressure > 0) {
-      Serial.print("Pressure (Pa): ");
-      Serial.println(pressure);
+  // Read all 8 sensors
+  for (uint8_t ch = 0; ch < CH_PER_BANK; ch++) {
+    if (!tcaselect(ch)) {
+      outputLine += "ERR";
     } else {
-      Serial.println("Error: Failed to read valid pressure data.");
+      delay(3);
+      bmp5_sensor_data d;
+      if (sensors[ch].getSensorData(&d) == BMP5_OK) {
+        outputLine += String(d.pressure, 1);
+      } else {
+        outputLine += "ERR";
+      }
     }
-
-    delay(500);  // Adjust delay as needed
+    if (ch < CH_PER_BANK - 1) outputLine += ",";
   }
+
+  Serial.println(outputLine);
+  delay(20);
+}
+
+//--------------------------------------------------------------------------------
+// Select a channel on the TCA9548A
+//--------------------------------------------------------------------------------
+bool tcaselect(uint8_t ch) {
+  if (ch > 7) return false;
+  Wire.beginTransmission(TCA9548A_ADDR);
+  Wire.write(1 << ch);
+  Wire.endTransmission();
+  delay(2);
+  return true;
+}
+
+//--------------------------------------------------------------------------------
+// Soft-reset BMP581
+//--------------------------------------------------------------------------------
+void resetBMP585(uint8_t addr) {
+  Wire.beginTransmission(addr);
+  Wire.write(0x7E);
+  Wire.write(0xB6);
+  Wire.endTransmission();
+  delay(2);
+}
+
+//--------------------------------------------------------------------------------
+// Initialize 8 BMP581 sensors
+//--------------------------------------------------------------------------------
+void initSensors() {
+  Wire.setClock(50000);
+  for (uint8_t ch = 0; ch < CH_PER_BANK; ch++) {
+    while (!tcaselect(ch)) delay(100);
+    resetBMP585(BMP_ADDR);
+    delay(50);
+    while (sensors[ch].beginI2C(BMP_ADDR, Wire) != BMP5_OK) {
+      delay(200);
+    }
+  }
+  // deselect all channels
+  Wire.beginTransmission(TCA9548A_ADDR);
+  Wire.write(0x00);
+  Wire.endTransmission();
 }
