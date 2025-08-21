@@ -4,11 +4,12 @@ import csv
 import matplotlib.pyplot as plt
 
 # Configure serial port
-serial_port = "COM10"  # Replace with your serial port
+serial_port = "COM3"  # Replace with your serial port
 baud_rate = 115200
-output_file = "C:/Users/steve/Downloads/pressure_data_15.csv"
+output_file = "C:/Users/steve/Downloads/pressure_data_2.csv"
 
 num_sensors = 8
+end_time = 20
 
 # Initialize data storage for real-time plotting
 sensor_data = [[] for _ in range(num_sensors)]  # num of sensors, each with its own list
@@ -24,7 +25,7 @@ try:
         print("Listening for data...")
         start_time = time.time()
 
-        while time.time() - start_time < 20:  # Collect data for 20 seconds
+        while time.time() - start_time < end_time:  # Collect data for 20 seconds
             line = ser.readline().decode('utf-8').strip()  # Read a line from the serial port
             if line:  # If a non-empty line is received
                 print(line)  # Print to console for debugging
