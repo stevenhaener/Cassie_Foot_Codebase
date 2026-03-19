@@ -4,9 +4,9 @@ import csv
 import matplotlib.pyplot as plt
 
 # Configure serial port
-serial_port = "COM10"  # Replace with your serial port
+serial_port = "COM6"  # Replace with your serial port
 baud_rate = 115200
-output_file = "C:/Users/steve/Downloads/pressure_data_15.csv"
+output_file = "C:/Users/12179/OneDrive/Desktop/GT Grad/CapStone Cassie/Data Collection/pressure_data_1.csv"
 
 num_sensors = 32
 

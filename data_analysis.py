@@ -6,15 +6,16 @@ import matplotlib.pyplot as plt
 # 串口配置
 serial_port = "COM6"   # 修改为你的串口
 baud_rate = 115200
-output_file = "C:/Users/17986/Desktop/summer/data/analysis/1.csv"
+output_file = "C:/Users/12179/OneDrive/Desktop/GT Grad/CapStone Cassie/Data Collection/Force Testing For Relationship/Force_Testing_10N_to_300N_2_20_2026_1.csv"
 
 num_tactile = 32
 num_imu = 3
 num_position = 1
 num_audio = 1
-total_channels = num_tactile + num_imu + num_position + num_audio  # 37
+total_channels \
+    = num_tactile + num_imu + num_position + num_audio  # 37
 
-end_time = 15  # 采集时长（秒）
+end_time = 5 # 采集时长（秒）
 
 # 数据存储
 timestamps = []
@@ -106,7 +107,7 @@ except IOError as e:
 if len(timestamps) > 0:
     # 1. 四块 tactile array 平均值曲线
     plt.figure(figsize=(10,6))
-    bank_titles = ["Front Left", "Front Right", "Back Left", "Back Right"]
+    bank_titles = ["Front Right", "Front Left", "Back Left", "Back Right"]
     for b in range(4):
         start = b * 8
         end = start + 8

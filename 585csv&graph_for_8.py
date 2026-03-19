@@ -4,12 +4,12 @@ import csv
 import matplotlib.pyplot as plt
 
 # Configure serial port
-serial_port = "COM3"  # Replace with your serial port
+serial_port = "COM8"  # Replace with your serial port
 baud_rate = 115200
-output_file = "C:/Users/steve/Downloads/pressure_data_2.csv"
+output_file = "C:/Users/12179/OneDrive/Desktop/GT Grad/CapStone Cassie/Data Collection/random testing.csv"
 
 num_sensors = 8
-end_time = 20
+end_time = 5
 
 # Initialize data storage for real-time plotting
 sensor_data = [[] for _ in range(num_sensors)]  # num of sensors, each with its own list
