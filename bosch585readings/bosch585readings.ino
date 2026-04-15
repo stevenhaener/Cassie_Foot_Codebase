@@ -37,7 +37,7 @@ void loop() {
     if (!tcaselect(ch)) {
       outputLine += "ERR";
     } else {
-      delay(3);
+      delay(5);
       bmp5_sensor_data d;
       if (sensors[ch].getSensorData(&d) == BMP5_OK) {
         outputLine += String(d.pressure, 1);
@@ -60,7 +60,7 @@ bool tcaselect(uint8_t ch) {
   Wire.beginTransmission(TCA9548A_ADDR);
   Wire.write(1 << ch);
   Wire.endTransmission();
-  delay(2);
+  delay(5);
   return true;
 }
 
@@ -72,14 +72,14 @@ void resetBMP585(uint8_t addr) {
   Wire.write(0x7E);
   Wire.write(0xB6);
   Wire.endTransmission();
-  delay(2);
+  delay(5);
 }
 
 //--------------------------------------------------------------------------------
 // Initialize 8 BMP581 sensors
 //--------------------------------------------------------------------------------
 void initSensors() {
-  Wire.setClock(50000);
+  Wire.setClock(200000);
   for (uint8_t ch = 0; ch < CH_PER_BANK; ch++) {
     while (!tcaselect(ch)) delay(100);
     resetBMP585(BMP_ADDR);

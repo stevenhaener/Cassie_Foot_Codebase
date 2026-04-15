@@ -11,9 +11,9 @@ BMP581 pressureSensor;
 // Function to select the desired channel on the multiplexer
 void tcaselect(uint8_t channel) {
   if (channel > 7) return;  // Ensure channel is valid (0-7)
-  Wire1.beginTransmission(TCA9548A_ADDR);
-  Wire1.write(1 << channel);  // Select the channel by writing a bitmask
-  Wire1.endTransmission();
+  Wire.beginTransmission(TCA9548A_ADDR);
+  Wire.write(1 << channel);  // Select the channel by writing a bitmask
+  Wire.endTransmission();
 }
 
 void setup()
@@ -24,20 +24,20 @@ void setup()
     Serial.println("BMP581 Example1 begin!");
 
     // Initialize the I2C library
-    Wire1.begin();
+    Wire.begin();
 
   for (uint8_t i = 0; i < 8; i++) {
     tcaselect(i);  // Select channel on the multiplexer
     Serial.print("Selected "); Serial.print(i); Serial.println("-th sensor.");  
     // Check if sensor is connected and initialize
     delay(10);
-    if (Wire1.requestFrom(0x47, 1)) {
+    if (Wire.requestFrom(0x47, 1)) {
       Serial.println("Device detected on channel 0.");
     } else {
       Serial.println("No device detected on channel 0.");
     }
     // Address is optional (defaults to 0x47)
-    int rst = pressureSensor.beginI2C(i2cAddress, Wire1);
+    int rst = pressureSensor.beginI2C(i2cAddress);
     while (rst != BMP5_OK)
     {
         // Not connected, inform user

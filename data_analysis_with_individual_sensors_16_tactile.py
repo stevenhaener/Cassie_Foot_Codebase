@@ -6,16 +6,16 @@ import matplotlib.pyplot as plt
 # ================== Serial config ==================
 serial_port = "COM6"   # change to your COM port
 baud_rate = 115200
-output_file = "C:/Users/12179/OneDrive/Desktop/GT Grad/CapStone Cassie/Data Collection/Force Testing For Relationship/Force_Testing_Back_Arrays_Relationship_120N.csv"
+output_file = "C:/Users/steve/Documents/LIDAR Research/4_8_26_test_data/test_01.csv"
 
 # ===== Only using back two tactile arrays now =====
 num_tactile = 16      # 2 arrays × 8 sensors each
 num_imu = 3
 num_position = 1
-num_audio = 1
+num_audio = 0
 total_channels = num_tactile + num_imu + num_position + num_audio  # 21
 
-end_time = 40  # collection time in seconds
+end_time = 180  # collection time in seconds
 
 # ================== Data storage ==================
 timestamps = []
@@ -160,7 +160,7 @@ try:
                     for i in range(num_imu):
                         imu_data[i].append(imu_fixed[i])
                     position_data.append(pos_fixed)
-                    audio_data.append(audio_fixed)
+                    # audio_data.append(audio_fixed)
 
                 else:
                     print(f"Incomplete row ({len(data)} values): {line}")
