@@ -14,7 +14,7 @@ num_position = 1
 num_audio = 1
 total_channels = num_tactile + num_imu + num_position + num_audio  # 37
 
-end_time = 20 # 采集时长（秒）
+end_time = 10 # 采集时长（秒）
 
 # ================== 数据存储 ==================
 timestamps = []

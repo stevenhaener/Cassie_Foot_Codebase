@@ -14,8 +14,8 @@
 #define TCA9548A_ADDR_4  0x71
 #define BMP_ADDR         0x47
 
-// Create ADXL345 object
-Adafruit_ADXL345_Unified accel = Adafruit_ADXL345_Unified(12345);
+// Create ADXL345 object IMU
+Adafruit_ADXL345_Unified accel = Adafruit_ADXL345_Unified(12345); //Rui
 
 // Position Sensor settings
 float init_voltage;  
@@ -24,18 +24,28 @@ const float maxDistance = 5.0; // Maximum travel distance in mm (arbritary set o
 const float voltValue = 3.3; // Volts, conect yellow wire to GND and green wire to the voltage pin
 float oldvoltage = 0.0;
 
-// Four banks of eight BMP581 sensors each
-BMP581 sensors1a[8];  // Wire1 @0x70
-BMP581 sensors1b[8];  // Wire1 @0x71
+// Four banks of eight BMP581 sensors each Tactile
+//BMP581 sensors1a[8];  // Wire1 @0x70
+//BMP581 sensors1b[8];  // Wire1 @0x71
 BMP581 sensors2a[8];  // Wire2 @0x70
 BMP581 sensors2b[8];  // Wire2 @0x71
 
-// Arrays for generic looping
-TwoWire* const buses[]     = { &Wire1, &Wire1, &Wire2, &Wire2 };
-BMP581*    const banks[]    = { sensors1a,  sensors1b,  sensors2a,  sensors2b  };
-uint8_t    const muxAddrs[] = { TCA9548A_ADDR_1, TCA9548A_ADDR_2,
-                                TCA9548A_ADDR_3, TCA9548A_ADDR_4 };
-const uint8_t NUM_BANKS    = 4;
+// Arrays for generic looping Tactile 4 arrays
+//TwoWire* const buses[]     = { &Wire1, &Wire1, &Wire2, &Wire2 };
+//BMP581*    const banks[]    = { sensors1a,  sensors1b,  sensors2a,  sensors2b  };
+//uint8_t    const muxAddrs[] = { TCA9548A_ADDR_1, TCA9548A_ADDR_2,
+//                                TCA9548A_ADDR_3, TCA9548A_ADDR_4 };
+//const uint8_t NUM_BANKS    = 4;
+
+
+// Arrays for generic looping Tactile 2 arrays
+TwoWire* const buses[]     = { &Wire2, &Wire2 };
+BMP581*    const banks[]   = { sensors2a, sensors2b };
+uint8_t    const muxAddrs[] = { TCA9548A_ADDR_3, TCA9548A_ADDR_4 };
+const uint8_t NUM_BANKS    = 2;
+
+
+
 const uint8_t CH_PER_BANK  = 8;
 
 // Forward declarations
@@ -54,7 +64,7 @@ void setup() {
     Serial.begin(115200);
     while (!Serial);
 
-    // Initialize accelerometer
+    // Initialize accelerometer IMU Rui
     if (!accel.begin()) {
     Serial.println("ADXL345 not detected. Check wiring.");
     while (1);
@@ -76,9 +86,9 @@ void setup() {
     // Initialize I2C busses
     Wire2.begin();
 
-    // Initialize all four sensor banks
-    initSensors(Wire1, sensors1a, TCA9548A_ADDR_1);
-    initSensors(Wire1, sensors1b, TCA9548A_ADDR_2);
+    // Initialize all four sensor banks Tactile
+    //initSensors(Wire1, sensors1a, TCA9548A_ADDR_1);
+    //initSensors(Wire1, sensors1b, TCA9548A_ADDR_2);
     initSensors(Wire2, sensors2a, TCA9548A_ADDR_3);
     initSensors(Wire2, sensors2b, TCA9548A_ADDR_4);
 
@@ -130,7 +140,7 @@ void loop() {
         bus.endTransmission();
     }
 
-    //Accelerometer logic
+    //Accelerometer logic IMU Rui
     sensors_event_t event;
     accel.getEvent(&event);
 
@@ -151,11 +161,11 @@ void loop() {
     
     oldvoltage = voltage;
 
-    outputLine += "," + String(acc_x, 3);
-    outputLine += "," + String(acc_y, 3);
-    outputLine += "," + String(acc_z, 3);
+    outputLine += "," + String(acc_x, 3); //IMU
+    outputLine += "," + String(acc_y, 3); //IMU
+    outputLine += "," + String(acc_z, 3); //IMU
     outputLine += "," + String(distance, 2);
-    outputLine += "," + String(emaLevel, 3);
+    outputLine += "," + String(emaLevel, 3);//Auditory
 
     // Print CSV line of 32 values plus accel and pos
     Serial.println(outputLine);

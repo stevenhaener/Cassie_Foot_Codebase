@@ -3,11 +3,11 @@
 // Uses ONLY the back 16 tactile sensors (2 arrays x 8 sensors).
 //
 // Logic:
-//   Start PUSHING when BOTH array averages exceed PUSH thresholds.
-//   Stay PUSHING until EITHER array average drops below RETRACT threshold.
-//   Otherwise stay in the current mode.
+//   Every loop is independent.
+//   If BOTH array averages exceed their thresholds -> PUSH
+//   Otherwise -> RETRACT
 //
-// This avoids getting stuck/chattering when force is released early.
+// This removes the state-machine / hysteresis behavior from the old Code B.
 
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
@@ -58,19 +58,9 @@ float emaLevel = 0.0f;
 const float alpha = 0.2f;
 
 // ========================= Tunable thresholds =========================
-// PUSH starts only if BOTH averages are above these
-const float PUSH_THRESHOLD_ARRAY1 = 99000.0;
-const float PUSH_THRESHOLD_ARRAY2 = 103000.0;
-
-// Once already pushing, retract only if EITHER average drops below these
-// Set these a bit LOWER than the push thresholds
-const float RETRACT_THRESHOLD_ARRAY1 = 98900.0;
-const float RETRACT_THRESHOLD_ARRAY2 = 102800.0;
-
-// ========================= Actuator mode =========================
-bool pushingNow = false;
-unsigned long lastCmdSend = 0;
-const unsigned long CMD_REFRESH_MS = 100;
+// PUSH only if BOTH arrays exceed their own thresholds
+const float THRESHOLD_ARRAY1 = 100000.0-1200;
+const float THRESHOLD_ARRAY2 = 103000.0-1200;
 
 // ========================= Forward declarations =========================
 bool    tcaselect(TwoWire &bus, uint8_t muxAddr, uint8_t ch);
@@ -113,8 +103,6 @@ void setup() {
     delay(100);
 
     sendRetractMode();
-    pushingNow = false;
-    lastCmdSend = millis();
 
     Serial.println("Setup complete.");
 }
@@ -182,31 +170,17 @@ void loop() {
     float array1Avg = avgs[0];
     float array2Avg = avgs[1];
 
-    // ========================= Hysteresis control =========================
-    bool startPush = (array1Avg > PUSH_THRESHOLD_ARRAY1) &&
-                     (array2Avg > PUSH_THRESHOLD_ARRAY2);
+    // ========================= Immediate control like Code A =========================
+    // Every loop is independent:
+    // if BOTH averages exceed thresholds -> push
+    // else -> retract
+    bool overPressure = (array1Avg > THRESHOLD_ARRAY1) &&
+                        (array2Avg > THRESHOLD_ARRAY2);
 
-    bool stopPush  = (array1Avg < RETRACT_THRESHOLD_ARRAY1) ||
-                     (array2Avg < RETRACT_THRESHOLD_ARRAY2);
-
-    if (!pushingNow) {
-        if (startPush) {
-            pushingNow = true;
-            sendForceMode();
-            lastCmdSend = millis();
-        } else if (millis() - lastCmdSend >= CMD_REFRESH_MS) {
-            sendRetractMode();
-            lastCmdSend = millis();
-        }
+    if (overPressure) {
+        sendForceMode();
     } else {
-        if (stopPush) {
-            pushingNow = false;
-            sendRetractMode();
-            lastCmdSend = millis();
-        } else if (millis() - lastCmdSend >= CMD_REFRESH_MS) {
-            sendForceMode();
-            lastCmdSend = millis();
-        }
+        sendRetractMode();
     }
 
     // ========================= CSV output =========================
@@ -215,13 +189,11 @@ void loop() {
     outputLine += "," + String(acc_z, 3);
     outputLine += "," + String(distance, 2);
     outputLine += "," + String(emaLevel, 3);
-    outputLine += "," + String(array1Avg, 1);
-    outputLine += "," + String(array2Avg, 1);
-    outputLine += "," + String(PUSH_THRESHOLD_ARRAY1, 1);
-    outputLine += "," + String(PUSH_THRESHOLD_ARRAY2, 1);
-    outputLine += "," + String(RETRACT_THRESHOLD_ARRAY1, 1);
-    outputLine += "," + String(RETRACT_THRESHOLD_ARRAY2, 1);
-    outputLine += "," + String(pushingNow ? 1 : 0);
+    //outputLine += "," + String(array1Avg, 1);
+    //outputLine += "," + String(array2Avg, 1);
+    //outputLine += "," + String(THRESHOLD_ARRAY1, 1);
+    //outputLine += "," + String(THRESHOLD_ARRAY2, 1);
+    //outputLine += "," + String(overPressure ? 1 : 0);
 
     Serial.println(outputLine);
     delay(5);

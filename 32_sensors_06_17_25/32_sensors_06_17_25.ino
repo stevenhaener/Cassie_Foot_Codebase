@@ -14,8 +14,10 @@
 #define ACTUATOR_2      Serial1
 
 // I²C mux and sensor addresses
-#define TCA9548A_ADDR    0x70
+#define TCA9548A_ADDR_1  0x70
 #define TCA9548A_ADDR_2  0x71
+#define TCA9548A_ADDR_3  0x70
+#define TCA9548A_ADDR_4  0x71
 #define BMP_ADDR         0x47
 
 // Create ADXL345 object
@@ -29,17 +31,23 @@ const float voltValue = 3.3; // Volts, conect yellow wire to GND and green wire 
 float oldvoltage = 0.0;
 
 // Four banks of eight BMP581 sensors each
-BMP581 sensors1a[8];  // Wire1 @0x70
-BMP581 sensors1b[8];  // Wire1 @0x71
+//BMP581 sensors1a[8];  // Wire1 @0x70
+//BMP581 sensors1b[8];  // Wire1 @0x71
 BMP581 sensors2a[8];  // Wire2 @0x70
 BMP581 sensors2b[8];  // Wire2 @0x71
 
 // Arrays for generic looping
-TwoWire* const buses[]     = { &Wire1,     &Wire1,     &Wire2,     &Wire2     };
-BMP581*    const banks[]    = { sensors1a,  sensors1b,  sensors2a,  sensors2b  };
-uint8_t    const muxAddrs[] = { TCA9548A_ADDR, TCA9548A_ADDR_2,
-                                TCA9548A_ADDR, TCA9548A_ADDR_2 };
-const uint8_t NUM_BANKS    = 4;
+//TwoWire* const buses[]     = { &Wire1,     &Wire1,     &Wire2,     &Wire2     };
+//BMP581*    const banks[]    = { sensors1a,  sensors1b,  sensors2a,  sensors2b  };
+//uint8_t    const muxAddrs[] = { TCA9548A_ADDR, TCA9548A_ADDR_2,
+//                                TCA9548A_ADDR, TCA9548A_ADDR_2 };
+//const uint8_t NUM_BANKS    = 4;
+
+// Arrays for generic looping Tactile 2 arrays
+TwoWire* const buses[]     = { &Wire2, &Wire2 };
+BMP581*    const banks[]   = { sensors2a, sensors2b };
+uint8_t    const muxAddrs[] = { TCA9548A_ADDR_3, TCA9548A_ADDR_4 };
+const uint8_t NUM_BANKS    = 2;
 const uint8_t CH_PER_BANK  = 8;
 
 // Forward declarations
@@ -81,10 +89,10 @@ void setup() {
     ACTUATOR_2.begin(921600);
 
     // Initialize all four sensor banks
-    initSensors(Wire1, sensors1a, TCA9548A_ADDR);
-    initSensors(Wire1, sensors1b, TCA9548A_ADDR_2);
-    initSensors(Wire2, sensors2a, TCA9548A_ADDR);
-    initSensors(Wire2, sensors2b, TCA9548A_ADDR_2);
+    //initSensors(Wire1, sensors1a, TCA9548A_ADDR);
+    //initSensors(Wire1, sensors1b, TCA9548A_ADDR_2);
+    initSensors(Wire2, sensors2a, TCA9548A_ADDR_3);
+    initSensors(Wire2, sensors2b, TCA9548A_ADDR_4);
 
     // Clear actuator faults
     uint8_t faultclr[] = { 0x55,0xAA,0x05,0xFF, inst_type,0x18,0x00,0x01, 0x00,0x4F };
