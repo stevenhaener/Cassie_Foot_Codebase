@@ -6,24 +6,24 @@ import matplotlib.pyplot as plt
 # ================== Serial config ==================
 serial_port = "COM6"   # change to your COM port
 baud_rate = 115200
-<<<<<<< HEAD
-output_file = "C:/Users/steve/Documents/LIDAR Research/4_8_26_test_data/test_01.csv"
-=======
-output_file = "C:/Users/12179/OneDrive/Desktop/GT Grad/CapStone Cassie/Data Collection/Force Testing For Relationship/Random_Test3.csv"
->>>>>>> 399c138 (update)
+
+
+
+output_file = "C:/Users/12179/OneDrive/Desktop/GT Grad/CapStone Cassie/Data Collection/Force Testing For Relationship/Random_Test5.csv"
+
 
 # ===== Only using back two tactile arrays now =====
 num_tactile = 16      # 2 arrays × 8 sensors each
 num_imu = 3
 num_position = 1
-num_audio = 0
+num_audio =1
 total_channels = num_tactile + num_imu + num_position + num_audio  # 21
 
-<<<<<<< HEAD
-end_time = 180  # collection time in seconds
-=======
-end_time = 10  # collection time in seconds
->>>>>>> 399c138 (update)
+
+
+
+end_time = 120  # collection time in seconds
+
 
 # ================== Data storage ==================
 timestamps = []

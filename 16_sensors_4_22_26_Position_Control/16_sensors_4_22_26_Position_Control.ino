@@ -3,7 +3,8 @@
 // - IMU auto-calibration at startup
 // - Future-ready IMU threshold logic
 // - Future-ready audio threshold logic
-// - Flexible actuator control conditions
+// - Actuator changed from FORCE CONTROL to POSITION CONTROL
+// - Raw actuator position range confirmed: 0 to 2000
 // ==========================================================
 
 #include <Wire.h>
@@ -63,23 +64,19 @@ const float alpha = 0.2f;
 const float THRESHOLD_ARRAY1 = 100000.0 - 1200;
 const float THRESHOLD_ARRAY2 = 103000.0 - 1200;
 
-// ---- IMU thresholds (future use) ----
-// You can change these later based on whichever axis you want to use
+// ---- IMU thresholds ----
 const float IMU_THRESHOLD_X = 0.5;   // m/s^2
 const float IMU_THRESHOLD_Y = 0.5;   // m/s^2
 const float IMU_THRESHOLD_Z = 0.5;   // m/s^2
 
-// Optional magnitude threshold if you want one-number IMU triggering
-const float IMU_THRESHOLD_MAG = 1.2; // m/s^2
+// Optional magnitude threshold
+const float IMU_THRESHOLD_MAG = 1.0; // m/s^2
 
-// ---- Audio threshold (future use) ----
-const float AUDIO_THRESHOLD = 0.2; // peak/EMA threshold
+// ---- Audio threshold ----
+const float AUDIO_THRESHOLD = 0.2;   // peak/EMA threshold
 
 // ========================= Enable switches =========================
-// Keep tactile enabled now
 const bool USE_TACTILE_CONTROL = false;
-
-// Turn these on later if you want them to matter
 const bool USE_IMU_CONTROL   = true;
 const bool USE_AUDIO_CONTROL = false;
 
@@ -87,6 +84,23 @@ const bool USE_AUDIO_CONTROL = false;
 // true  -> use overall magnitude
 // false -> use per-axis threshold check
 const bool USE_IMU_MAGNITUDE = true;
+
+// ========================= Position control settings =========================
+// Raw range tested: 0 to 2000
+const uint16_t ACTUATOR_MIN_RAW = 0;
+const uint16_t ACTUATOR_MAX_RAW = 2000;
+
+// Change these to the two positions you want
+const uint16_t PUSH_POSITION_RAW    = 400;   // example push target
+const uint16_t RETRACT_POSITION_RAW = 100;    // example retract target
+
+enum ActuatorState {
+    ACT_STATE_UNKNOWN = 0,
+    ACT_STATE_PUSH,
+    ACT_STATE_RETRACT
+};
+
+ActuatorState actuatorState = ACT_STATE_UNKNOWN;
 
 // ========================= Function declarations =========================
 bool tcaselect(TwoWire &bus, uint8_t muxAddr, uint8_t ch);
@@ -96,8 +110,11 @@ void resetBMP585(TwoWire &bus, uint8_t addr);
 uint8_t calculateChecksum(uint8_t *data, int length);
 void sendCommandWithChecksum(uint8_t* command, uint8_t length);
 void clearActuatorFaults();
-void sendForceMode();
-void sendRetractMode();
+
+void setPositionMode();
+void sendPositionTargetRaw(uint16_t targetRaw);
+void sendPushPosition();
+void sendRetractPosition();
 
 void calibrateIMU();
 
@@ -106,11 +123,11 @@ void calibrateIMU();
 // ==========================================================
 void setup() {
     Serial.begin(115200);
-    while (!Serial);
+    while (!Serial) {}
 
     if (!accel.begin()) {
         Serial.println("ADXL345 not detected.");
-        while (1);
+        while (1) {}
     }
 
     accel.setRange(ADXL345_RANGE_2_G);
@@ -136,7 +153,14 @@ void setup() {
     delay(100);
     clearActuatorFaults();
     delay(100);
-    sendRetractMode();
+
+    // Put actuator in position mode once at startup
+    setPositionMode();
+    delay(100);
+
+    // Start at retract position
+    sendRetractPosition();
+    actuatorState = ACT_STATE_RETRACT;
 
     Serial.println("Setup complete.");
 }
@@ -235,28 +259,29 @@ void loop() {
     }
 
     // ========================= Final actuator logic =========================
-    // All enabled conditions must be true to PUSH
+    // All enabled conditions must be true to go to PUSH position
     bool pushCondition = tactileCondition && imuCondition && audioCondition;
 
     if (pushCondition) {
-        sendForceMode();
+        if (actuatorState != ACT_STATE_PUSH) {
+            sendPushPosition();
+            actuatorState = ACT_STATE_PUSH;
+        }
     } else {
-        sendRetractMode();
+        if (actuatorState != ACT_STATE_RETRACT) {
+            sendRetractPosition();
+            actuatorState = ACT_STATE_RETRACT;
+        }
     }
 
     // ========================= CSV Output =========================
     outputLine += "," + String(acc_x, 3);
     outputLine += "," + String(acc_y, 3);
     outputLine += "," + String(acc_z, 3);
-    //outputLine += "," + String(imu_mag, 3);
     outputLine += "," + String(distance, 2);
     outputLine += "," + String(emaLevel, 3);
-    //outputLine += "," + String(array1Avg, 1);
-    //outputLine += "," + String(array2Avg, 1);
-    //outputLine += "," + String(tactileCondition ? 1 : 0);
-    //outputLine += "," + String(imuCondition ? 1 : 0);
-    //outputLine += "," + String(audioCondition ? 1 : 0);
     //outputLine += "," + String(pushCondition ? 1 : 0);
+    //outputLine += "," + String(actuatorState == ACT_STATE_PUSH ? 1 : 0);
 
     Serial.println(outputLine);
 
@@ -312,38 +337,38 @@ void sendCommandWithChecksum(uint8_t* command, uint8_t length) {
 }
 
 void clearActuatorFaults() {
-    static uint8_t cmd[] = {
-        0x55,0xAA,0x05,0xFF,inst_type,0x18,0x00,0x01,0x00,0x4F
+    uint8_t cmd[] = {
+        0x55,0xAA,0x05,0xFF,inst_type,0x18,0x00,0x01,0x00
     };
     sendCommandWithChecksum(cmd, sizeof(cmd));
 }
 
-void sendForceMode() {
-    static uint8_t mode[] = {
-        0x55,0xAA,0x05,0xFF,inst_type,0x25,0x00,0x03,0x00,0x5E
+void setPositionMode() {
+    uint8_t mode[] = {
+        0x55,0xAA,0x05,0xFF,inst_type,0x25,0x00,0x00,0x00
     };
-
-    static uint8_t force[] = {
-        0x55,0xAA,0x05,0xFF,inst_type,0x27,0x00,0xD0,0x07,0x34
-    };
-
     sendCommandWithChecksum(mode, sizeof(mode));
-    delay(5);
-    sendCommandWithChecksum(force, sizeof(force));
 }
 
-void sendRetractMode() {
-    static uint8_t mode[] = {
-        0x55,0xAA,0x05,0xFF,inst_type,0x25,0x00,0x00,0x00,0x5B
+void sendPositionTargetRaw(uint16_t targetRaw) {
+    if (targetRaw < ACTUATOR_MIN_RAW) targetRaw = ACTUATOR_MIN_RAW;
+    if (targetRaw > ACTUATOR_MAX_RAW) targetRaw = ACTUATOR_MAX_RAW;
+
+    uint8_t pos[] = {
+        0x55,0xAA,0x05,0xFF,inst_type,0x29,0x00,
+        (uint8_t)(targetRaw & 0xFF),
+        (uint8_t)((targetRaw >> 8) & 0xFF)
     };
 
-    static uint8_t pos[] = {
-        0x55,0xAA,0x05,0xFF,inst_type,0x29,0x00,0x00,0x00,0x5F
-    };
-
-    sendCommandWithChecksum(mode, sizeof(mode));
-    delay(5);
     sendCommandWithChecksum(pos, sizeof(pos));
+}
+
+void sendPushPosition() {
+    sendPositionTargetRaw(PUSH_POSITION_RAW);
+}
+
+void sendRetractPosition() {
+    sendPositionTargetRaw(RETRACT_POSITION_RAW);
 }
 
 // ==========================================================
