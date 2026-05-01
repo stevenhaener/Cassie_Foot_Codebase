@@ -5,6 +5,8 @@
 // - Future-ready audio threshold logic
 // - Actuator changed from FORCE CONTROL to POSITION CONTROL
 // - Raw actuator position range confirmed: 0 to 2000
+// - Teensy built-in LED ON when actuator is pushing
+// - Added real loop Hz measurement in Serial Monitor
 // ==========================================================
 
 #include <Wire.h>
@@ -13,6 +15,12 @@
 #include "SparkFun_BMP581_Arduino_Library.h"
 #include <Audio.h>
 #include <math.h>
+
+// ========================= LED =========================
+const int LED_PIN = 13;
+
+// ========================= Hz Measurement =========================
+unsigned long lastLoopTime = 0;
 
 // ========================= Actuator definitions =========================
 #define start_byte1     0x55
@@ -30,7 +38,6 @@
 // ========================= IMU =========================
 Adafruit_ADXL345_Unified accel = Adafruit_ADXL345_Unified(12345);
 
-// ---- IMU calibration offsets ----
 float imu_bias_x = 0.0;
 float imu_bias_y = 0.0;
 float imu_bias_z = 0.0;
@@ -60,39 +67,29 @@ float emaLevel = 0.0f;
 const float alpha = 0.2f;
 
 // ========================= Thresholds =========================
-// ---- Tactile thresholds ----
 const float THRESHOLD_ARRAY1 = 100000.0 - 1200;
 const float THRESHOLD_ARRAY2 = 103000.0 - 1200;
 
-// ---- IMU thresholds ----
-const float IMU_THRESHOLD_X = 0.5;   // m/s^2
-const float IMU_THRESHOLD_Y = 0.5;   // m/s^2
-const float IMU_THRESHOLD_Z = 0.5;   // m/s^2
+const float IMU_THRESHOLD_X = 0.5;
+const float IMU_THRESHOLD_Y = 0.5;
+const float IMU_THRESHOLD_Z = 0.5;
+const float IMU_THRESHOLD_MAG = 1.0;
 
-// Optional magnitude threshold
-const float IMU_THRESHOLD_MAG = 1.0; // m/s^2
-
-// ---- Audio threshold ----
-const float AUDIO_THRESHOLD = 0.2;   // peak/EMA threshold
+const float AUDIO_THRESHOLD = 0.2;
 
 // ========================= Enable switches =========================
 const bool USE_TACTILE_CONTROL = false;
-const bool USE_IMU_CONTROL   = true;
-const bool USE_AUDIO_CONTROL = false;
+const bool USE_IMU_CONTROL     = true;
+const bool USE_AUDIO_CONTROL   = false;
 
-// Choose IMU logic style:
-// true  -> use overall magnitude
-// false -> use per-axis threshold check
 const bool USE_IMU_MAGNITUDE = true;
 
 // ========================= Position control settings =========================
-// Raw range tested: 0 to 2000
 const uint16_t ACTUATOR_MIN_RAW = 0;
 const uint16_t ACTUATOR_MAX_RAW = 2000;
 
-// Change these to the two positions you want
-const uint16_t PUSH_POSITION_RAW    = 400;   // example push target
-const uint16_t RETRACT_POSITION_RAW = 100;    // example retract target
+const uint16_t PUSH_POSITION_RAW    = 800;
+const uint16_t RETRACT_POSITION_RAW = 200;
 
 enum ActuatorState {
     ACT_STATE_UNKNOWN = 0,
@@ -122,8 +119,11 @@ void calibrateIMU();
 // SETUP
 // ==========================================================
 void setup() {
-    Serial.begin(115200);
+    Serial.begin(921600);
     while (!Serial) {}
+
+    pinMode(LED_PIN, OUTPUT);
+    digitalWrite(LED_PIN, LOW);
 
     if (!accel.begin()) {
         Serial.println("ADXL345 not detected.");
@@ -133,11 +133,11 @@ void setup() {
     accel.setRange(ADXL345_RANGE_2_G);
     Serial.println("ADXL345 ready.");
 
-    // -------- IMU Calibration --------
     calibrateIMU();
 
     pinMode(positionSensorPin, INPUT);
     delay(10);
+
     int sensorValue = analogRead(positionSensorPin);
     init_voltage = sensorValue * (voltValue / 1023.0);
 
@@ -154,15 +154,17 @@ void setup() {
     clearActuatorFaults();
     delay(100);
 
-    // Put actuator in position mode once at startup
     setPositionMode();
     delay(100);
 
-    // Start at retract position
     sendRetractPosition();
     actuatorState = ACT_STATE_RETRACT;
+    digitalWrite(LED_PIN, LOW);
+
+    lastLoopTime = micros();
 
     Serial.println("Setup complete.");
+    Serial.println("BMP1_0,BMP1_1,BMP1_2,BMP1_3,BMP1_4,BMP1_5,BMP1_6,BMP1_7,BMP2_0,BMP2_1,BMP2_2,BMP2_3,BMP2_4,BMP2_5,BMP2_6,BMP2_7,acc_x,acc_y,acc_z,distance,audio,hz");
 }
 
 // ==========================================================
@@ -179,7 +181,7 @@ void loop() {
     // ========================= Tactile =========================
     float totals[NUM_BANKS] = {0};
     String outputLine;
-    outputLine.reserve(400);
+    outputLine.reserve(450);
 
     for (uint8_t bank = 0; bank < NUM_BANKS; bank++) {
         TwoWire &bus = *buses[bank];
@@ -191,7 +193,7 @@ void loop() {
             if (!tcaselect(bus, muxAddr, ch)) {
                 outputLine += "ERR";
             } else {
-                delay(3);
+                //delay(3);
                 bmp5_sensor_data d;
 
                 if (sensors[ch].getSensorData(&d) == BMP5_OK) {
@@ -231,7 +233,7 @@ void loop() {
     float array1Avg = totals[0] / CH_PER_BANK;
     float array2Avg = totals[1] / CH_PER_BANK;
 
-    // ------------------------- Tactile condition -------------------------
+    // ========================= Control conditions =========================
     bool tactileCondition = true;
     if (USE_TACTILE_CONTROL) {
         tactileCondition =
@@ -239,7 +241,6 @@ void loop() {
             (array2Avg > THRESHOLD_ARRAY2);
     }
 
-    // ------------------------- IMU condition -------------------------
     bool imuCondition = true;
     if (USE_IMU_CONTROL) {
         if (USE_IMU_MAGNITUDE) {
@@ -252,14 +253,12 @@ void loop() {
         }
     }
 
-    // ------------------------- Audio condition -------------------------
     bool audioCondition = true;
     if (USE_AUDIO_CONTROL) {
         audioCondition = (emaLevel > AUDIO_THRESHOLD);
     }
 
     // ========================= Final actuator logic =========================
-    // All enabled conditions must be true to go to PUSH position
     bool pushCondition = tactileCondition && imuCondition && audioCondition;
 
     if (pushCondition) {
@@ -267,12 +266,20 @@ void loop() {
             sendPushPosition();
             actuatorState = ACT_STATE_PUSH;
         }
+        digitalWrite(LED_PIN, HIGH);
     } else {
         if (actuatorState != ACT_STATE_RETRACT) {
             sendRetractPosition();
             actuatorState = ACT_STATE_RETRACT;
         }
+        digitalWrite(LED_PIN, LOW);
     }
+
+    // ========================= Hz Measurement =========================
+    unsigned long now = micros();
+    float dt = (now - lastLoopTime) / 1000000.0;
+    float hz = 1.0 / dt;
+    lastLoopTime = now;
 
     // ========================= CSV Output =========================
     outputLine += "," + String(acc_x, 3);
@@ -280,8 +287,7 @@ void loop() {
     outputLine += "," + String(acc_z, 3);
     outputLine += "," + String(distance, 2);
     outputLine += "," + String(emaLevel, 3);
-    //outputLine += "," + String(pushCondition ? 1 : 0);
-    //outputLine += "," + String(actuatorState == ACT_STATE_PUSH ? 1 : 0);
+    //outputLine += "," + String(hz, 2);
 
     Serial.println(outputLine);
 
@@ -290,7 +296,6 @@ void loop() {
 
 // ==========================================================
 // IMU Calibration Function
-// Keep sensor still during startup
 // ==========================================================
 void calibrateIMU() {
     Serial.println("Calibrating IMU... Keep still.");
@@ -322,7 +327,9 @@ void calibrateIMU() {
 // ==========================================================
 uint8_t calculateChecksum(uint8_t *data, int length) {
     uint16_t sum = 0;
-    for (int i = 2; i < length; i++) sum += data[i];
+    for (int i = 2; i < length; i++) {
+        sum += data[i];
+    }
     return (uint8_t)(sum & 0xFF);
 }
 
@@ -338,24 +345,29 @@ void sendCommandWithChecksum(uint8_t* command, uint8_t length) {
 
 void clearActuatorFaults() {
     uint8_t cmd[] = {
-        0x55,0xAA,0x05,0xFF,inst_type,0x18,0x00,0x01,0x00
+        0x55, 0xAA, 0x05, 0xFF, inst_type, 0x18, 0x00, 0x01, 0x00
     };
     sendCommandWithChecksum(cmd, sizeof(cmd));
 }
 
 void setPositionMode() {
     uint8_t mode[] = {
-        0x55,0xAA,0x05,0xFF,inst_type,0x25,0x00,0x00,0x00
+        0x55, 0xAA, 0x05, 0xFF, inst_type, 0x25, 0x00, 0x00, 0x00
     };
     sendCommandWithChecksum(mode, sizeof(mode));
 }
 
 void sendPositionTargetRaw(uint16_t targetRaw) {
-    if (targetRaw < ACTUATOR_MIN_RAW) targetRaw = ACTUATOR_MIN_RAW;
-    if (targetRaw > ACTUATOR_MAX_RAW) targetRaw = ACTUATOR_MAX_RAW;
+    if (targetRaw < ACTUATOR_MIN_RAW) {
+        targetRaw = ACTUATOR_MIN_RAW;
+    }
+
+    if (targetRaw > ACTUATOR_MAX_RAW) {
+        targetRaw = ACTUATOR_MAX_RAW;
+    }
 
     uint8_t pos[] = {
-        0x55,0xAA,0x05,0xFF,inst_type,0x29,0x00,
+        0x55, 0xAA, 0x05, 0xFF, inst_type, 0x29, 0x00,
         (uint8_t)(targetRaw & 0xFF),
         (uint8_t)((targetRaw >> 8) & 0xFF)
     };
@@ -384,13 +396,15 @@ void resetBMP585(TwoWire &bus, uint8_t addr) {
 
 bool tcaselect(TwoWire &bus, uint8_t muxAddr, uint8_t ch) {
     if (ch > 7) return false;
+
     bus.beginTransmission(muxAddr);
     bus.write(1 << ch);
+
     return (bus.endTransmission() == 0);
 }
 
 void initSensors(TwoWire &bus, BMP581 sensors[], uint8_t muxAddr) {
-    bus.setClock(100000);
+    bus.setClock(400000);
 
     for (uint8_t ch = 0; ch < CH_PER_BANK; ch++) {
         if (!tcaselect(bus, muxAddr, ch)) continue;
