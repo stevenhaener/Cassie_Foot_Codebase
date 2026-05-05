@@ -1,11 +1,3 @@
-// ==========================================================
-// MULTI-RATE VERSION
-// - Audio sampled internally at Teensy Audio rate ~44.1 kHz
-// - Audio processed in blocks of 512 samples
-// - Tactile / IMU / position / actuator / serial output update once per audio window
-// - Prints packet_hz and estimated_audio_sample_rate
-// ==========================================================
-
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_ADXL345_U.h>
@@ -13,17 +5,29 @@
 #include <Audio.h>
 #include <math.h>
 
+// ==========================================================
+// USB SERIAL FRAME FORMAT
+// Header:
+//   0xA5 0x5A TYPE LEN_L LEN_H PAYLOAD...
+//
+// TYPE:
+//   0x01 = AUDIO binary frame, 256 bytes = 128 int16 samples
+//   0x02 = SENSOR CSV text frame
+// ==========================================================
+
+const uint8_t FRAME_H1 = 0xA5;
+const uint8_t FRAME_H2 = 0x5A;
+const uint8_t TYPE_AUDIO  = 0x01;
+const uint8_t TYPE_SENSOR = 0x02;
+
 // ========================= LED =========================
 const int LED_PIN = 13;
 
 // ========================= Timing =========================
-unsigned long lastPacketTime = 0;
+unsigned long lastSensorPacketTime = 0;
 
 // ========================= Actuator definitions =========================
-#define start_byte1     0x55
-#define start_byte2     0xAA
 #define inst_type       0x32
-
 #define ACTUATOR_1      Serial1
 #define ACTUATOR_2      Serial1
 
@@ -56,18 +60,21 @@ const uint8_t NUM_BANKS   = 2;
 const uint8_t CH_PER_BANK = 8;
 
 // ========================= Audio sensor =========================
-// Teensy Audio Library uses 128-sample blocks at ~44.1 kHz
+// Teensy Audio Library: 44.1 kHz, 128 samples per block
 AudioInputI2S2       i2s2;
 AudioRecordQueue     audioQueue;
 AudioConnection      cordL(i2s2, 0, audioQueue, 0);
 
-const int AUDIO_BLOCKS_PER_PACKET = 4;
-const int AUDIO_SAMPLES_PER_PACKET = AUDIO_BLOCKS_PER_PACKET * 128;
+const int AUDIO_BLOCKS_PER_SENSOR_PACKET = 4;
+const int AUDIO_SAMPLES_PER_BLOCK = 128;
+const int AUDIO_BYTES_PER_BLOCK = AUDIO_SAMPLES_PER_BLOCK * 2;
+const int AUDIO_SAMPLES_PER_SENSOR_PACKET =
+    AUDIO_BLOCKS_PER_SENSOR_PACKET * AUDIO_SAMPLES_PER_BLOCK;
 
+int audioBlockCounter = 0;
+float audioSumSquares = 0.0f;
 float audioPeak = 0.0f;
 float audioRMS = 0.0f;
-float audioEMA = 0.0f;
-const float alpha = 0.2f;
 
 // ========================= Thresholds =========================
 const float THRESHOLD_ARRAY1 = 100000.0 - 1200;
@@ -84,8 +91,7 @@ const float AUDIO_THRESHOLD = 0.2;
 const bool USE_TACTILE_CONTROL = false;
 const bool USE_IMU_CONTROL     = true;
 const bool USE_AUDIO_CONTROL   = false;
-
-const bool USE_IMU_MAGNITUDE = true;
+const bool USE_IMU_MAGNITUDE   = true;
 
 // ========================= Position control settings =========================
 const uint16_t ACTUATOR_MIN_RAW = 0;
@@ -117,26 +123,27 @@ void sendPushPosition();
 void sendRetractPosition();
 
 void calibrateIMU();
-bool processAudioWindow();
+
+void sendFrame(uint8_t type, const uint8_t* payload, uint16_t length);
+void sendAudioBlock(int16_t* buffer);
+void updateAudioFeatures(int16_t* buffer);
+void sendSensorPacket();
 
 // ==========================================================
 // SETUP
 // ==========================================================
 void setup() {
-    Serial.begin(921600);
+    Serial.begin(2000000);
     while (!Serial) {}
 
     pinMode(LED_PIN, OUTPUT);
     digitalWrite(LED_PIN, LOW);
 
     if (!accel.begin()) {
-        Serial.println("ADXL345 not detected.");
         while (1) {}
     }
 
     accel.setRange(ADXL345_RANGE_2_G);
-    Serial.println("ADXL345 ready.");
-
     calibrateIMU();
 
     pinMode(positionSensorPin, INPUT);
@@ -149,7 +156,7 @@ void setup() {
     initSensors(Wire2, sensors2a, TCA9548A_ADDR_3);
     initSensors(Wire2, sensors2b, TCA9548A_ADDR_4);
 
-    AudioMemory(32);
+    AudioMemory(64);
     audioQueue.begin();
 
     ACTUATOR_1.begin(921600);
@@ -166,32 +173,103 @@ void setup() {
     actuatorState = ACT_STATE_RETRACT;
     digitalWrite(LED_PIN, LOW);
 
-    lastPacketTime = micros();
+    lastSensorPacketTime = micros();
 
-    Serial.println("Setup complete.");
-    Serial.println("BMP1_0,BMP1_1,BMP1_2,BMP1_3,BMP1_4,BMP1_5,BMP1_6,BMP1_7,BMP2_0,BMP2_1,BMP2_2,BMP2_3,BMP2_4,BMP2_5,BMP2_6,BMP2_7,acc_x,acc_y,acc_z,distance,audio_peak,audio_rms,packet_hz,estimated_audio_sample_rate");
+    String header =
+        "time_ms,"
+        "BMP1_0,BMP1_1,BMP1_2,BMP1_3,BMP1_4,BMP1_5,BMP1_6,BMP1_7,"
+        "BMP2_0,BMP2_1,BMP2_2,BMP2_3,BMP2_4,BMP2_5,BMP2_6,BMP2_7,"
+        "acc_x,acc_y,acc_z,distance,audio_peak,audio_rms,"
+        "sensor_packet_hz,estimated_audio_sample_rate";
+
+    sendFrame(TYPE_SENSOR, (const uint8_t*)header.c_str(), header.length());
 }
 
 // ==========================================================
 // LOOP
 // ==========================================================
 void loop() {
+    while (audioQueue.available() > 0) {
+        int16_t* buffer = audioQueue.readBuffer();
 
-    if (!processAudioWindow()) {
-        return;
+        // 1. Send raw audio to laptop at 44.1 kHz
+        sendAudioBlock(buffer);
+
+        // 2. Accumulate audio features
+        updateAudioFeatures(buffer);
+
+        audioQueue.freeBuffer();
+
+        audioBlockCounter++;
+
+        // 3. Every 4 audio blocks = 512 audio samples,
+        // collect other sensors once and send sensor packet.
+        if (audioBlockCounter >= AUDIO_BLOCKS_PER_SENSOR_PACKET) {
+            audioRMS = sqrt(audioSumSquares / AUDIO_SAMPLES_PER_SENSOR_PACKET);
+
+            sendSensorPacket();
+
+            audioBlockCounter = 0;
+            audioSumSquares = 0.0f;
+            audioPeak = 0.0f;
+        }
     }
+}
 
-    // ========================= Tactile =========================
+// ==========================================================
+// Frame sender
+// ==========================================================
+void sendFrame(uint8_t type, const uint8_t* payload, uint16_t length) {
+    Serial.write(FRAME_H1);
+    Serial.write(FRAME_H2);
+    Serial.write(type);
+    Serial.write((uint8_t)(length & 0xFF));
+    Serial.write((uint8_t)((length >> 8) & 0xFF));
+    Serial.write(payload, length);
+}
+
+// ==========================================================
+// Send raw audio block
+// 128 samples × 2 bytes = 256 bytes
+// ==========================================================
+void sendAudioBlock(int16_t* buffer) {
+    sendFrame(TYPE_AUDIO, (const uint8_t*)buffer, AUDIO_BYTES_PER_BLOCK);
+}
+
+// ==========================================================
+// Audio feature accumulation
+// ==========================================================
+void updateAudioFeatures(int16_t* buffer) {
+    for (int i = 0; i < AUDIO_SAMPLES_PER_BLOCK; i++) {
+        float x = buffer[i] / 32768.0f;
+        float ax = fabs(x);
+
+        if (ax > audioPeak) {
+            audioPeak = ax;
+        }
+
+        audioSumSquares += x * x;
+    }
+}
+
+// ==========================================================
+// Sensor packet at ~86 Hz
+// ==========================================================
+void sendSensorPacket() {
     float totals[NUM_BANKS] = {0};
     String outputLine;
-    outputLine.reserve(520);
+    outputLine.reserve(600);
 
+    outputLine += String(millis());
+
+    // ========================= Tactile =========================
     for (uint8_t bank = 0; bank < NUM_BANKS; bank++) {
         TwoWire &bus = *buses[bank];
         BMP581* sensors = banks[bank];
         uint8_t muxAddr = muxAddrs[bank];
 
         for (uint8_t ch = 0; ch < CH_PER_BANK; ch++) {
+            outputLine += ",";
 
             if (!tcaselect(bus, muxAddr, ch)) {
                 outputLine += "ERR";
@@ -204,10 +282,6 @@ void loop() {
                 } else {
                     outputLine += "ERR";
                 }
-            }
-
-            if (!(bank == NUM_BANKS - 1 && ch == CH_PER_BANK - 1)) {
-                outputLine += ",";
             }
         }
 
@@ -260,7 +334,7 @@ void loop() {
         audioCondition = (audioRMS > AUDIO_THRESHOLD);
     }
 
-    // ========================= Final actuator logic =========================
+    // ========================= Actuator logic =========================
     bool pushCondition = tactileCondition && imuCondition && audioCondition;
 
     if (pushCondition) {
@@ -277,70 +351,32 @@ void loop() {
         digitalWrite(LED_PIN, LOW);
     }
 
-    // ========================= Frequency Measurement =========================
+    // ========================= Frequency measurement =========================
     unsigned long now = micros();
-    float dt = (now - lastPacketTime) / 1000000.0;
-    float packetHz = 1.0 / dt;
-    lastPacketTime = now;
+    float dt = (now - lastSensorPacketTime) / 1000000.0;
+    float sensorPacketHz = 1.0 / dt;
+    lastSensorPacketTime = now;
 
-    float estimatedAudioSampleRate = packetHz * AUDIO_SAMPLES_PER_PACKET;
+    float estimatedAudioSampleRate =
+        sensorPacketHz * AUDIO_SAMPLES_PER_SENSOR_PACKET;
 
-    // ========================= CSV Output =========================
+    // ========================= Add sensor values =========================
     outputLine += "," + String(acc_x, 3);
     outputLine += "," + String(acc_y, 3);
     outputLine += "," + String(acc_z, 3);
     outputLine += "," + String(distance, 2);
     outputLine += "," + String(audioPeak, 6);
-    //outputLine += "," + String(audioRMS, 6);
-    //outputLine += "," + String(packetHz, 2);
-    //outputLine += "," + String(estimatedAudioSampleRate, 1);
+    outputLine += "," + String(audioRMS, 6);
+    outputLine += "," + String(sensorPacketHz, 2);
+    outputLine += "," + String(estimatedAudioSampleRate, 1);
 
-    Serial.println(outputLine);
-}
-
-// ==========================================================
-// High-rate Audio Window Processing
-// ==========================================================
-bool processAudioWindow() {
-    if (audioQueue.available() < AUDIO_BLOCKS_PER_PACKET) {
-        return false;
-    }
-
-    float sumSquares = 0.0f;
-    float peak = 0.0f;
-    int sampleCount = 0;
-
-    for (int b = 0; b < AUDIO_BLOCKS_PER_PACKET; b++) {
-        int16_t *buffer = audioQueue.readBuffer();
-
-        for (int i = 0; i < 128; i++) {
-            float x = buffer[i] / 32768.0f;
-
-            float ax = fabs(x);
-            if (ax > peak) {
-                peak = ax;
-            }
-
-            sumSquares += x * x;
-            sampleCount++;
-        }
-
-        audioQueue.freeBuffer();
-    }
-
-    audioPeak = peak;
-    audioRMS = sqrt(sumSquares / sampleCount);
-    audioEMA = alpha * audioRMS + (1.0f - alpha) * audioEMA;
-
-    return true;
+    sendFrame(TYPE_SENSOR, (const uint8_t*)outputLine.c_str(), outputLine.length());
 }
 
 // ==========================================================
 // IMU Calibration Function
 // ==========================================================
 void calibrateIMU() {
-    Serial.println("Calibrating IMU... Keep still.");
-
     const int samples = 300;
     sensors_event_t event;
 
@@ -359,8 +395,6 @@ void calibrateIMU() {
     imu_bias_x = sumX / samples;
     imu_bias_y = sumY / samples;
     imu_bias_z = sumZ / samples;
-
-    Serial.println("IMU calibration done.");
 }
 
 // ==========================================================
@@ -386,14 +420,16 @@ void sendCommandWithChecksum(uint8_t* command, uint8_t length) {
 
 void clearActuatorFaults() {
     uint8_t cmd[] = {
-        0x55, 0xAA, 0x05, 0xFF, inst_type, 0x18, 0x00, 0x01, 0x00
+        0x55, 0xAA, 0x05, 0xFF,
+        inst_type, 0x18, 0x00, 0x01, 0x00
     };
     sendCommandWithChecksum(cmd, sizeof(cmd));
 }
 
 void setPositionMode() {
     uint8_t mode[] = {
-        0x55, 0xAA, 0x05, 0xFF, inst_type, 0x25, 0x00, 0x00, 0x00
+        0x55, 0xAA, 0x05, 0xFF,
+        inst_type, 0x25, 0x00, 0x00, 0x00
     };
     sendCommandWithChecksum(mode, sizeof(mode));
 }
@@ -408,7 +444,8 @@ void sendPositionTargetRaw(uint16_t targetRaw) {
     }
 
     uint8_t pos[] = {
-        0x55, 0xAA, 0x05, 0xFF, inst_type, 0x29, 0x00,
+        0x55, 0xAA, 0x05, 0xFF,
+        inst_type, 0x29, 0x00,
         (uint8_t)(targetRaw & 0xFF),
         (uint8_t)((targetRaw >> 8) & 0xFF)
     };
